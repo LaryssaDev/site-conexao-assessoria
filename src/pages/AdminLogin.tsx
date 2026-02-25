@@ -20,7 +20,7 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
     // Simulate API call
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    if (username === 'admin' && password === '123456') {
+    if (username === 'aline.ferreira' && password === 'aline3005') {
       onLogin();
     } else {
       setError('Usuário ou senha inválidos');
@@ -63,7 +63,7 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 focus:border-brand-purple outline-none transition-all"
-                  placeholder="admin"
+                  placeholder="aline.ferreira"
                   required
                 />
               </div>
