@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
 import { 
   Users, 
   LogOut, 
   Trash2, 
   Search, 
   Download,
+  Upload,
   Calendar,
   Mail,
   Phone,
@@ -23,6 +25,8 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('leads');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [leadToDelete, setLeadToDelete] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const storedLeads = JSON.parse(localStorage.getItem('leads') || '[]');
@@ -30,11 +34,50 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   }, []);
 
   const handleDeleteLead = (id: string) => {
-    if (window.confirm('Tem certeza que deseja excluir este lead?')) {
-      const updatedLeads = leads.filter(lead => lead.id !== id);
-      setLeads(updatedLeads);
+    setLeads(prevLeads => {
+      const updatedLeads = prevLeads.filter(lead => lead.id !== id);
       localStorage.setItem('leads', JSON.stringify(updatedLeads));
-    }
+      return updatedLeads;
+    });
+    setLeadToDelete(null);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
+
+        const newLeads: Lead[] = jsonData.map((item, index) => ({
+          id: `imported-${Date.now()}-${index}`,
+          name: item.Nome || item.name || item.Name || 'Sem Nome',
+          email: item.Email || item.email || 'sem@email.com',
+          phone: item.Telefone || item.phone || item.Phone || '',
+          message: item.Mensagem || item.message || item.Message || '',
+          createdAt: item.Data || item.date || item.Date || new Date().toISOString()
+        }));
+
+        const updatedLeads = [...newLeads, ...leads];
+        setLeads(updatedLeads);
+        localStorage.setItem('leads', JSON.stringify(updatedLeads));
+        alert(`${newLeads.length} leads importados com sucesso!`);
+        
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error) {
+        console.error('Erro ao importar arquivo:', error);
+        alert('Erro ao importar arquivo. Verifique se o formato está correto.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   const exportToCSV = () => {
@@ -142,13 +185,29 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 focus:border-brand-purple outline-none transition-all"
                 />
               </div>
-              <button 
-                onClick={exportToCSV}
-                className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-brand-gray-dark rounded-xl font-bold hover:bg-gray-200 transition-colors"
-              >
-                <Download size={20} />
-                Exportar CSV
-              </button>
+              <div className="flex items-center gap-2">
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  onChange={handleImport}
+                  accept=".csv, .xlsx, .xls"
+                  className="hidden"
+                />
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-6 py-3 bg-brand-purple/10 text-brand-purple rounded-xl font-bold hover:bg-brand-purple/20 transition-colors"
+                >
+                  <Upload size={20} />
+                  Importar
+                </button>
+                <button 
+                  onClick={exportToCSV}
+                  className="flex items-center gap-2 px-6 py-3 bg-gray-100 text-brand-gray-dark rounded-xl font-bold hover:bg-gray-200 transition-colors"
+                >
+                  <Download size={20} />
+                  Exportar CSV
+                </button>
+              </div>
             </div>
 
             {/* Table */}
@@ -206,7 +265,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               <MessageSquare size={20} />
                             </button>
                             <button 
-                              onClick={() => handleDeleteLead(lead.id)}
+                              onClick={() => setLeadToDelete(lead.id)}
                               title="Excluir Lead"
                               className="p-2 text-brand-gray hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
                             >
@@ -232,6 +291,49 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </div>
         </div>
       </main>
+      {/* Modal de Confirmação de Exclusão */}
+      <AnimatePresence>
+        {leadToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setLeadToDelete(null)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 text-center"
+            >
+              <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 size={40} />
+              </div>
+              <h3 className="text-2xl font-bold text-brand-gray-dark mb-2">Excluir Lead?</h3>
+              <p className="text-brand-gray mb-8">
+                Esta ação não pode ser desfeita. O lead será removido permanentemente da sua lista.
+              </p>
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setLeadToDelete(null)}
+                  className="flex-1 px-6 py-3 bg-gray-100 text-brand-gray-dark rounded-xl font-bold hover:bg-gray-200 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => handleDeleteLead(leadToDelete)}
+                  className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
+                >
+                  Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Modal de Detalhes */}
       <AnimatePresence>
         {selectedLead && (
