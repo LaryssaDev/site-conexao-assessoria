@@ -12,9 +12,12 @@ import {
   Mail,
   Phone,
   MessageSquare,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { Lead } from '../types';
+import { supabase, isConfigured } from '../lib/supabase';
+import { AlertTriangle } from 'lucide-react';
 
 interface AdminDashboardProps {
   onLogout: () => void;
@@ -26,20 +29,64 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState('leads');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [leadToDelete, setLeadToDelete] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const fetchLeads = async () => {
+    setIsLoading(true);
+    try {
+      if (isConfigured) {
+        const { data, error } = await supabase
+          .from('leads')
+          .select('*')
+          .order('createdAt', { ascending: false });
+
+        if (error) throw error;
+        setLeads(data || []);
+        
+        // Update cache
+        localStorage.setItem('leads', JSON.stringify(data || []));
+      } else {
+        // Fallback to cache if not configured
+        const storedLeads = JSON.parse(localStorage.getItem('leads') || '[]');
+        setLeads(storedLeads);
+      }
+    } catch (error) {
+      console.error('Error fetching leads:', error);
+      // Fallback to cache
+      const storedLeads = JSON.parse(localStorage.getItem('leads') || '[]');
+      setLeads(storedLeads);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const storedLeads = JSON.parse(localStorage.getItem('leads') || '[]');
-    setLeads(storedLeads);
+    fetchLeads();
   }, []);
 
-  const handleDeleteLead = (id: string) => {
-    setLeads(prevLeads => {
-      const updatedLeads = prevLeads.filter(lead => lead.id !== id);
-      localStorage.setItem('leads', JSON.stringify(updatedLeads));
-      return updatedLeads;
-    });
-    setLeadToDelete(null);
+  const handleDeleteLead = async (id: string) => {
+    try {
+      if (isConfigured) {
+        const { error } = await supabase
+          .from('leads')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+      }
+
+      setLeads(prevLeads => {
+        const updatedLeads = prevLeads.filter(lead => lead.id !== id);
+        localStorage.setItem('leads', JSON.stringify(updatedLeads));
+        return updatedLeads;
+      });
+    } catch (error) {
+      console.error('Error deleting lead:', error);
+      alert('Erro ao excluir lead. Por favor, tente novamente.');
+    } finally {
+      setLeadToDelete(null);
+    }
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,7 +94,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const data = new Uint8Array(event.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
@@ -55,8 +102,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         const worksheet = workbook.Sheets[firstSheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
 
-        const newLeads: Lead[] = jsonData.map((item, index) => ({
-          id: `imported-${Date.now()}-${index}`,
+        const newLeads = jsonData.map((item) => ({
           name: item.Nome || item.name || item.Name || 'Sem Nome',
           email: item.Email || item.email || 'sem@email.com',
           phone: item.Telefone || item.phone || item.Phone || '',
@@ -64,10 +110,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           createdAt: item.Data || item.date || item.Date || new Date().toISOString()
         }));
 
-        const updatedLeads = [...newLeads, ...leads];
-        setLeads(updatedLeads);
-        localStorage.setItem('leads', JSON.stringify(updatedLeads));
-        alert(`${newLeads.length} leads importados com sucesso!`);
+        // Insert into Supabase
+        const { error } = await supabase
+          .from('leads')
+          .insert(newLeads);
+
+        if (error) throw error;
+
+        await fetchLeads();
+        alert(`${newLeads.length} leads importados com sucesso para o banco de dados!`);
         
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
@@ -165,6 +216,14 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         <header className="bg-white border-b border-gray-200 px-8 py-6 flex justify-between items-center sticky top-0 z-10">
           <h1 className="text-2xl font-bold text-brand-gray-dark">Gerenciamento de Leads</h1>
           <div className="flex items-center gap-4">
+            <button 
+              onClick={fetchLeads}
+              disabled={isLoading}
+              className="p-2 text-brand-gray hover:text-brand-purple hover:bg-brand-purple/10 rounded-xl transition-all disabled:opacity-50"
+              title="Atualizar lista"
+            >
+              <RefreshCw size={20} className={isLoading ? 'animate-spin' : ''} />
+            </button>
             <div className="bg-brand-purple/10 text-brand-purple px-4 py-2 rounded-full font-bold text-sm">
               {leads.length} Leads Totais
             </div>
@@ -172,6 +231,21 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         </header>
 
         <div className="p-8">
+          {!isConfigured && (
+            <div className="mb-8 bg-amber-50 border border-amber-200 rounded-2xl p-6 flex items-start gap-4">
+              <div className="p-2 bg-amber-100 text-amber-600 rounded-lg shrink-0">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-amber-800 mb-1">Supabase não configurado</h3>
+                <p className="text-amber-700 text-sm leading-relaxed">
+                  As chaves do Supabase não foram encontradas nas variáveis de ambiente. 
+                  O sistema está operando em modo de demonstração usando apenas o armazenamento local. 
+                  Para ativar o banco de dados real, configure <strong>VITE_SUPABASE_URL</strong> e <strong>VITE_SUPABASE_ANON_KEY</strong>.
+                </p>
+              </div>
+            </div>
+          )}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             {/* Table Header / Actions */}
             <div className="p-6 border-b border-gray-200 flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -223,12 +297,21 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredLeads.length > 0 ? (
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-20 text-center">
+                        <div className="flex flex-col items-center gap-4">
+                          <div className="w-10 h-10 border-4 border-brand-purple border-t-transparent rounded-full animate-spin" />
+                          <p className="text-brand-gray font-medium">Carregando leads...</p>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : filteredLeads.length > 0 ? (
                     filteredLeads.map((lead) => (
                       <tr key={lead.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-6">
                           <p className="font-bold text-brand-gray-dark">{lead.name}</p>
-                          <p className="text-xs text-brand-gray font-mono">{lead.id.slice(0, 8)}</p>
+                          <p className="text-xs text-brand-gray font-mono">{lead.id.toString().slice(0, 8)}</p>
                         </td>
                         <td className="px-6 py-6">
                           <div className="space-y-1">

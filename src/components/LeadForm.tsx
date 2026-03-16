@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Send, CheckCircle } from 'lucide-react';
 import { Lead } from '../types';
+import { supabase, isConfigured } from '../lib/supabase';
 
 export default function LeadForm() {
   const [formData, setFormData] = useState({
@@ -57,25 +58,39 @@ export default function LeadForm() {
     setIsSubmitting(true);
     setErrors({});
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      const newLead = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        message: formData.message,
+        createdAt: new Date().toISOString()
+      };
 
-    const newLead: Lead = {
-      id: crypto.randomUUID(),
-      ...formData,
-      createdAt: new Date().toISOString()
-    };
+      // Save to Supabase only if configured
+      if (isConfigured) {
+        const { error } = await supabase
+          .from('leads')
+          .insert([newLead]);
 
-    // Save to localStorage
-    const existingLeads = JSON.parse(localStorage.getItem('leads') || '[]');
-    localStorage.setItem('leads', JSON.stringify([newLead, ...existingLeads]));
+        if (error) throw error;
+      }
 
-    setIsSubmitting(false);
-    setIsSuccess(true);
-    setFormData({ name: '', email: '', phone: '', message: '' });
+      // Always save to localStorage as fallback/cache
+      const existingLeads = JSON.parse(localStorage.getItem('leads') || '[]');
+      localStorage.setItem('leads', JSON.stringify([{ id: crypto.randomUUID(), ...newLead }, ...existingLeads]));
 
-    // Reset success message after 5 seconds
-    setTimeout(() => setIsSuccess(false), 5000);
+      setIsSuccess(true);
+      setFormData({ name: '', email: '', phone: '', message: '' });
+      
+      // Reset success message after 5 seconds
+      setTimeout(() => setIsSuccess(false), 5000);
+    } catch (error) {
+      console.error('Error saving lead:', error);
+      alert('Ocorreu um erro ao enviar sua mensagem. Por favor, tente novamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
